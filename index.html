@@ -363,6 +363,11 @@ tr.dir-last td{border-bottom:1px solid var(--line)}
 .near-m{font-size:11.5px;color:var(--muted)}
 .near-msg{color:var(--ink3);font-size:13px;padding-right:24px}
 .near-ctl a{font-size:17px;font-weight:700;color:var(--ink)}
+.fs-ctl a{font-size:16px;font-weight:700;color:var(--ink)}
+#embedHint{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:1200;background:rgba(12,0,40,.9);color:#eaf0f6;font-size:14px;font-weight:600;padding:12px 18px;border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.35);opacity:0;pointer-events:none;transition:opacity .2s;white-space:nowrap}
+#embedHint.show{opacity:1;pointer-events:auto}
+#embedHint a{color:#ff7a66;text-decoration:none}
+#embedHint a:hover{text-decoration:underline}
 .near-ctl a.busy{color:var(--red)}
 .me-dot{width:16px;height:16px;border-radius:50%;background:#2563eb;border:3px solid #fff;box-shadow:0 0 0 6px rgba(37,99,235,.25)}
 
@@ -1226,6 +1231,58 @@ const NearControl=L.Control.extend({ options:{position:'topleft'}, onAdd(){
   return d;
 }});
 map.addControl(new NearControl());
+
+// ── Embedded in another page (e.g. electrumignite.com/owner-map) ──
+// Inside an iframe a plain scroll must move the host page, not zoom the map, so
+// zooming takes ⌘/Ctrl + scroll (trackpad pinches arrive as ctrl+wheel too).
+const EMBEDDED=(()=>{ try{ return window.self!==window.top; }catch(e){ return true; } })();
+function goFullscreen(){
+  if(document.fullscreenElement){ document.exitFullscreen(); return; }
+  const standalone=()=>window.open(location.origin+location.pathname,'_blank','noopener');
+  // the host iframe needs allow="fullscreen" for in-place full screen; otherwise open the map on its own
+  if(document.fullscreenEnabled && document.documentElement.requestFullscreen)
+    document.documentElement.requestFullscreen().catch(standalone);
+  else standalone();
+}
+if(EMBEDDED){
+  const mapEl=document.getElementById('map');
+  const isMac=/Mac|iPhone|iPad/.test(navigator.platform||navigator.userAgent);
+  const hint=document.createElement('div');
+  hint.id='embedHint';
+  hint.innerHTML=`Hold ${isMac?'⌘':'Ctrl'} and scroll to zoom · <a href="#" data-fs>open full screen</a>`;
+  document.getElementById('map-container').appendChild(hint);
+  hint.querySelector('[data-fs]').addEventListener('click',e=>{ e.preventDefault(); goFullscreen(); });
+
+  const FullscreenControl=L.Control.extend({ options:{position:'topleft'}, onAdd(){
+    const d=L.DomUtil.create('div','leaflet-bar fs-ctl');
+    d.innerHTML='<a href="#" role="button" title="Open full screen" aria-label="Open full screen">⤢</a>';
+    L.DomEvent.disableClickPropagation(d);
+    d.firstChild.addEventListener('click',e=>{ e.preventDefault(); goFullscreen(); });
+    return d;
+  }});
+  map.addControl(new FullscreenControl());
+
+  const syncWheel=()=>{ document.fullscreenElement ? map.scrollWheelZoom.enable() : map.scrollWheelZoom.disable(); };
+  syncWheel();
+  document.addEventListener('fullscreenchange',()=>{
+    syncWheel(); map.invalidateSize({animate:false});
+    const a=document.querySelector('.fs-ctl a'); if(a){ const on=!!document.fullscreenElement; a.textContent=on?'⤡':'⤢'; a.title=on?'Exit full screen':'Open full screen'; }
+  });
+
+  let hintTimer=0, lastZoom=0;
+  mapEl.addEventListener('wheel',e=>{
+    if(document.fullscreenElement) return;
+    if(e.ctrlKey||e.metaKey){
+      e.preventDefault();
+      const now=Date.now(); if(now-lastZoom<180) return; lastZoom=now;
+      map.setZoomAround(map.mouseEventToContainerPoint(e), map.getZoom()+(e.deltaY<0?1:-1));
+      return;
+    }
+    hint.classList.add('show');
+    clearTimeout(hintTimer); hintTimer=setTimeout(()=>hint.classList.remove('show'),1600);
+  },{passive:false,capture:true});
+}
+
 function nearMe(){
   const btn=document.querySelector('.near-ctl a');
   if(!navigator.geolocation){ openSheet('<div class="near-msg">This browser can’t share its location.</div>'); return; }
